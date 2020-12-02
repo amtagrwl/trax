@@ -37,16 +37,18 @@ weighted-average. For example:
     1) if `argmax(output) == target_category`, else as incorrect (value 0). The
     accuracy for the batch is then the average of these 1's and 0's.
 
-  - CrossEntropy: Treat model output and target values as two probability
-    distributions; measure the cross entropy of the model output relative to
-    the (assumed true) target distribution. The scalar value for the batch is
-    then the average of the item-wise cross-entropy values.
+  - CategoryCrossEntropy: Treat model output and target values as the source of
+    two probability distributions; measure the cross entropy of the model's
+    predicted distribution relative to the (assumed true) target distribution.
+    The scalar value for the batch is then the average of the item-wise
+    cross-entropy values.
 
 In deriving a single scalar for the batch, there is flexibility to use reducing
 functions other than a cross-item average, for instance sum, weighted/masked
 mean, or a specialized sequence mean.
 """
 
+from trax import fastmath
 from trax import shapes
 from trax.fastmath import numpy as jnp
 from trax.layers import base
@@ -112,6 +114,45 @@ def WeightedCategoryAccuracy():
     return jnp.sum(ones_and_zeros * weights) / jnp.sum(weights)
 
   return base.Fn('WeightedCategoryAccuracy', f)
+
+
+def CategoryCrossEntropy():
+  """Returns a layer that computes cross entropy from activations and integers.
+
+  The layer takes two inputs:
+
+    - A batch of activation vectors. The components in a given vector should
+      be pre-softmax activations (mappable to a probability distribution via
+      softmax). For performance reasons, the softmax and cross entropy
+      computations are combined inside the layer.
+
+    - A batch of target categories; each target is an integer in
+      `{0, ..., N-1}`, where `N` is the activation vector depth/dimensionality.
+
+  To compute cross-entropy, the layer derives probability distributions from
+  its inputs:
+
+    - activation vectors: vector --> SoftMax(vector)
+
+    - target categories: integer --> OneHot(integer)
+
+  (The conversion of integer category targets to one-hot vectors amounts to
+  assigning all the probability mass to the target category.) Cross-entropy
+  per batch item is computed between the resulting distributions; notionally:
+
+      cross_entropy(one_hot(targets), softmax(model_output))
+
+  The layer returns the average of these cross-entropy values over all items in
+  the batch.
+  """
+  def f(model_output, targets):  # pylint: disable=invalid-name
+    target_distributions = one_hot(targets, model_output.shape[-1])
+    model_log_distributions = _log_softmax(model_output)
+    cross_entropies = - jnp.sum(target_distributions * model_log_distributions,
+                                axis=-1)
+    return jnp.average(cross_entropies)
+
+  return base.Fn('CategoryCrossEntropy', f)
 
 
 def Accuracy(classifier=core.ArgMax()):
@@ -283,3 +324,20 @@ def one_hot(x, n_categories, dtype=jnp.float32):  # pylint: disable=invalid-name
   """Makes a one-hot array (n+1 dims) from an int-categorical array (n dims)."""
   indices_less_than_n = jnp.arange(n_categories)
   return jnp.array(x[..., jnp.newaxis] == indices_less_than_n, dtype)
+
+
+def _log_softmax(x):  # pylint: disable=invalid-name
+  """Transforms activation vectors to log-probability vectors.
+
+  Log probability vectors are derived by, in effect, applying softmax to raw
+  activation vectors and then applying log element-wise. The actual
+  implementation uses a mathematically valid simplification of this.
+
+  Args:
+    x: An ndarray with activations vectors along the final (-1) axis.
+
+  Returns:
+    An ndarray containing log-probability vectors derived from the raw
+    activation vectors in `x`.
+  """
+  return x - fastmath.logsumexp(x, axis=-1, keepdims=True)

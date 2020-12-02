@@ -18,8 +18,8 @@
 
 from absl.testing import absltest
 import numpy as np
-
 import trax.layers as tl
+from trax.layers import metrics
 
 
 class MetricsTest(absltest.TestCase):
@@ -73,6 +73,28 @@ class MetricsTest(absltest.TestCase):
                               [.2, .7, .1, 0.]])
     accuracy = layer([model_outputs, targets, weights])
     self.assertEqual(accuracy, .625)
+
+  def test_category_cross_entropy(self):
+    layer = tl.CategoryCrossEntropy()
+    targets = np.array([0, 1])
+
+    # Near-perfect prediction (for both items in batch).
+    model_outputs = np.array([[9., 2., 0., -2.],
+                              [2., 9., 0., -2.]])
+    loss = layer([model_outputs, targets])
+    self.assertAlmostEqual(loss, .001, places=3)
+
+    # More right than wrong (for both items in batch).
+    model_outputs = np.array([[2.2, 2., 0., -2.],
+                              [2., 2.2, 0., -2.]])
+    loss = layer([model_outputs, targets])
+    self.assertAlmostEqual(loss, .665, places=3)
+
+    # Batch with one item near perfect, one item more right than wrong.
+    model_outputs = np.array([[9., 2., 0., -2.],
+                              [2., 2.2, 0., -2.]])
+    loss = layer([model_outputs, targets])
+    self.assertAlmostEqual(loss, .333, places=3)
 
   def test_accuracy_even_weights(self):
     layer = tl.Accuracy()
@@ -250,6 +272,15 @@ class MetricsTest(absltest.TestCase):
     self.assertEqual('BinaryCrossEntropySum_in3', str(layer))
     layer = tl.CrossEntropySum()
     self.assertEqual('CrossEntropySum_in3', str(layer))
+
+  def test_one_hot(self):
+    targets = np.array([2, 0, 1])
+    n_categories = 5
+    target_distributions = metrics.one_hot(targets, n_categories)
+    self.assertEqual(tl.to_list(target_distributions),
+                     [[0., 0., 1., 0., 0.],
+                      [1., 0., 0., 0., 0.],
+                      [0., 1., 0., 0., 0.]])
 
 
 if __name__ == '__main__':
